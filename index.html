@@ -1,0 +1,266 @@
+
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI-BCMS Live Monitor</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0b1220;color:#f1f5f9;
+font-family:Arial,sans-serif;padding:18px}
+main{max-width:680px;margin:auto}
+h1{font-size:23px;margin-bottom:5px}
+small,.muted{color:#94a3b8}
+.panel{background:#172338;border:1px solid #334155;
+border-radius:14px;padding:16px;margin-top:15px}
+.status{display:flex;align-items:center;gap:8px}
+.dot{width:10px;height:10px;border-radius:50%;
+background:#64748b}
+.dot.live{background:#22c55e}
+button,select,textarea{font:inherit;border-radius:9px}
+button{border:0;padding:13px;cursor:pointer;
+background:#38bdf8;color:#07111e;font-weight:bold}
+button:disabled{opacity:.4}
+.stop{background:#ef4444;color:white}
+.controls{display:flex;gap:10px;margin:15px 0}
+.controls button{flex:1}
+select,textarea{width:100%;background:#0f172a;
+color:white;border:1px solid #475569;padding:11px}
+textarea{min-height:85px;margin-top:10px}
+.item{border-left:3px solid #ef4444;padding:10px;
+background:#0f172a;margin-top:10px;border-radius:6px}
+.time{font-size:12px;color:#94a3b8}
+.alert{color:#fda4af}
+#transcript{min-height:70px;white-space:pre-wrap;
+overflow-wrap:anywhere;line-height:1.6}
+.note{font-size:12px;color:#94a3b8;line-height:1.6}
+</style>
+</head>
+<body>
+<main>
+<h1>AI-BCMS</h1>
+<small>Live AI Content Monitoring • Prototype v1</small>
+
+<section class="panel">
+ <div class="status">
+  <span id="dot" class="dot"></span>
+  <strong id="status">Standby</strong>
+ </div>
+ <p class="muted">Speech Recognition / Profanity Detection</p>
+ <label for="language">Recognition Language</label>
+ <select id="language">
+  <option value="en-US">English</option>
+  <option value="ms-MY">Bahasa Melayu</option>
+ </select>
+ <div class="controls">
+  <button id="start">Start Monitoring</button>
+  <button id="stop" class="stop" disabled>Stop</button>
+ </div>
+ <p id="message" class="note">
+  Ready for testing.
+ </p>
+</section>
+
+<section class="panel">
+ <h3>Live Transcript</h3>
+ <div id="transcript" aria-live="polite">
+  Waiting for audio...
+ </div>
+</section>
+
+<section class="panel">
+ <h3>Profanity Alerts: <span id="count">0</span></h3>
+ <div id="alerts">No profanity detected.</div>
+</section>
+
+<section class="panel">
+ <h3>Manual Test Mode</h3>
+ <p class="note">Test detection without microphone.</p>
+ <textarea id="manual"
+ placeholder="Type a sample dialogue..."></textarea>
+ <button id="test">Analyze Text</button>
+</section>
+
+<section class="panel">
+ <button id="clear">Clear Results</button>
+ <p class="note">
+ Prototype only. Not approved for confidential
+ company content. No transcripts are sent by
+ this application's JavaScript code. However,
+ browser speech recognition may use external
+ processing services.
+ </p>
+</section>
+</main>
+
+<script>
+const SpeechAPI =
+ window.SpeechRecognition ||
+ window.webkitSpeechRecognition;
+
+const $ = id => document.getElementById(id);
+
+const words = [
+ {term:"fuck",language:"EN",severity:"HIGH"},
+ {term:"fucking",language:"EN",severity:"HIGH"},
+ {term:"shit",language:"EN",severity:"MEDIUM"},
+ {term:"bitch",language:"EN",severity:"HIGH"},
+ {term:"asshole",language:"EN",severity:"HIGH"},
+ {term:"bastard",language:"EN",severity:"MEDIUM"},
+ {term:"bodoh",language:"MS",severity:"REVIEW"},
+ {term:"bangang",language:"MS",severity:"REVIEW"},
+ {term:"sial",language:"MS",severity:"REVIEW"},
+ {term:"celaka",language:"MS",severity:"REVIEW"}
+];
+
+let recognition = null;
+let listening = false;
+let finalText = "";
+let alertCount = 0;
+
+function setStatus(message,active=false){
+ $("status").textContent=message;
+ $("dot").classList.toggle("live",active);
+ $("start").disabled=active;
+ $("stop").disabled=!active;
+}
+
+function normalize(text){
+ return text.toLowerCase().normalize("NFKC");
+}
+
+function checkProfanity(text){
+ const normalized=normalize(text);
+ const tokens=normalized.match(/[\p{L}\p{N}]+/gu)||[];
+ const found=new Set(tokens);
+
+ for(const item of words){
+  if(!found.has(item.term))continue;
+
+  alertCount++;
+  $("count").textContent=alertCount;
+
+  if(alertCount===1)$("alerts").textContent="";
+
+  const div=document.createElement("div");
+  div.className="item";
+
+  const title=document.createElement("strong");
+  title.className="alert";
+  title.textContent=item.term.toUpperCase()+
+   " • "+item.severity;
+
+  const detail=document.createElement("div");
+  detail.className="time";
+  detail.textContent=
+   new Date().toLocaleTimeString("en-GB")+
+   " • "+item.language+
+   " • Review required";
+
+  const sample=document.createElement("div");
+  sample.textContent=text;
+
+  div.append(title,detail,sample);
+  $("alerts").prepend(div);
+ }
+}
+
+function startMonitoring(){
+ if(!SpeechAPI){
+  $("message").textContent=
+   "Speech recognition unavailable. Use Manual Test.";
+  return;
+ }
+
+ finalText="";
+ $("transcript").textContent="";
+ recognition=new SpeechAPI();
+ recognition.lang=$("language").value;
+ recognition.continuous=true;
+ recognition.interimResults=true;
+ recognition.maxAlternatives=1;
+ listening=true;
+
+ recognition.onstart=()=>{
+  setStatus("Listening...",true);
+  $("message").textContent="Microphone active.";
+ };
+
+ recognition.onresult=(event)=>{
+  let interim="";
+
+  for(let i=event.resultIndex;
+      i<event.results.length;i++){
+   const result=event.results[i];
+   const text=result[0].transcript.trim();
+
+   if(result.isFinal){
+    finalText+=text+"\n";
+    checkProfanity(text);
+   }else{
+    interim+=text+" ";
+   }
+  }
+
+  $("transcript").textContent=
+   finalText+"\n"+interim;
+ };
+
+ recognition.onerror=(event)=>{
+  $("message").textContent=
+   "Recognition error: "+event.error;
+ };
+
+ recognition.onend=()=>{
+  listening=false;
+  setStatus("Stopped");
+  $("message").textContent+=
+   " Recognition session ended.";
+ };
+
+ try{
+  recognition.start();
+  $("message").textContent="Starting microphone...";
+ }catch(e){
+  listening=false;
+  setStatus("Error");
+  $("message").textContent=e.message;
+ }
+}
+
+function stopMonitoring(){
+ listening=false;
+ if(recognition)recognition.stop();
+ setStatus("Stopped");
+}
+
+$("start").onclick=startMonitoring;
+$("stop").onclick=stopMonitoring;
+
+$("test").onclick=()=>{
+ const value=$("manual").value.trim();
+ if(!value)return;
+
+ $("transcript").textContent=value;
+ checkProfanity(value);
+ $("message").textContent="Manual test completed.";
+};
+
+$("clear").onclick=()=>{
+ stopMonitoring();
+ finalText="";
+ alertCount=0;
+ $("count").textContent="0";
+ $("transcript").textContent="Waiting for audio...";
+ $("alerts").textContent="No profanity detected.";
+ $("manual").value="";
+};
+
+if(!SpeechAPI){
+ $("message").textContent=
+ "Speech recognition not supported. Manual testing available.";
+}
+</script>
+</body>
+</html>
